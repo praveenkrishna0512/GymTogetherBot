@@ -117,9 +117,13 @@ def askWeek(update, context):
                      parse_mode = 'HTML')
 
 def askDay(update, context, weekPicked):
-    txt1 = "You are scheduling for <b>{week}</b>\n\n".format(week = weekPicked)
-    txt2 = "Pick the day you wish to schedule for below"
-    fullText = txt1 + txt2
+    user = update.callback_query.message.chat.username
+    txt1 = "You are scheduling for <b>{week}</b>\n".format(week = weekPicked)
+    txt2 = printTimeslots(user)
+    txt3 = "Pick the day you wish to schedule for below"
+    if txt2 != "":
+        txt2 += "\n" 
+    fullText = txt1 + txt2 + txt3
     bot.edit_message_text(chat_id = update.callback_query.message.chat.id,
                      text = fullText,
                      reply_markup = makeInlineKeyboard(dayList, 'DAY'),
@@ -129,16 +133,31 @@ def askDay(update, context, weekPicked):
 def handleDay(update, context, dayPicked, weekPicked):
     user = update.callback_query.message.chat.username
     if dayPicked == "Done!":
-        # ------------------------------------------------
-        # TODO Add a ending message + Print chosen timeslots
-        # ------------------------------------------------
-        fullText = "Done scheduling for {week}! \nSee you at the gym :)".format(week = weekPicked)
+        txt1 = "Done scheduling for <em><b>{week}</b></em>!\n".format(week = weekPicked)
+        txt2 = printTimeslots(user)
+        txt3 = "\n<b>See you at the gym :)</b>"
+        fullText = txt1 + txt2 + txt3
         bot.edit_message_text(chat_id = update.callback_query.message.chat.id,
                      text = fullText,
                      message_id = update.callback_query.message.message_id,
                      parse_mode = 'HTML')
     else:
         askTime(update, context, dayPicked)
+
+def printTimeslots(user):
+    txt2 = "\n<b>Timeslots picked:</b>\n"
+    fulltxt = ""
+    for day, timeDict in userDataBase[user].items():
+        tempStr = ""
+        for time, status in timeDict.items():
+            if status:
+                tempStr = tempStr + "\n" + time
+        if tempStr != "":
+            fulltxt += "\n<u>" + day + "</u>" + tempStr + "\n"
+    if fulltxt != "":
+        fulltxt = txt2 + fulltxt
+    return fulltxt
+    
 
 def askTime(update, context, dayPicked):
     txt1 = "You are scheduling for <b>{day}</b>\n\n".format(day = dayPicked)
