@@ -9,12 +9,15 @@ from telebot import types
 import telegram
 from telegram import CallbackQuery, ParseMode
 import ast
+from dbhelper import DBHelper
 
 PORT = get_port()
 API_KEY = get_api_key()
 if API_KEY == None:
     raise Exception("Please update API Key")
 
+
+# TODO: CHANGE LITERAL STRING VALUES
 weekList = {
     "1" : "This Week",
     "2" : "Next Week"
@@ -43,28 +46,24 @@ timeList = {
     "back" : "Back"
 }
 
-# Creates user database
-# ------------------------------------------------
-# TODO: TO BE REPLACED WITH SERVER SIDE
-# ------------------------------------------------
-usersList = ["praveeeenk"]
-def makeUserDataBase(users):
-    timeDict = {}
-    for time in timeList.values():
-        if time == "Done!":
-            break
-        timeDict[time] = False
+# usersList = ["praveeeenk"]
+# def makeUserDataBase(users):
+#     timeDict = {}
+#     for time in timeList.values():
+#         if time == "Done!":
+#             break
+#         timeDict[time] = False
 
-    dayDict = {}
-    for day in dayList.values():
-        dayDict[day] = timeDict.copy()
+#     dayDict = {}
+#     for day in dayList.values():
+#         dayDict[day] = timeDict.copy()
 
-    userDict = {}
-    for user in users:
-        userDict[user] = dayDict.copy()
+#     userDict = {}
+#     for user in users:
+#         userDict[user] = dayDict.copy()
 
-    return userDict
-userDataBase = makeUserDataBase(usersList)
+#     return userDict
+# userDataBase = makeUserDataBase(usersList)
 
 # -----------------------------------------------------------------------------------------------------
 # Enable logging
@@ -92,8 +91,36 @@ def makeTimeInlineKeyboard(lst, optionID, dayPicked):
                                             callback_data = "['optionID', '" + optionID + "', 'value', '" + value + "', 'day', '" + dayPicked + "']"))
     return markup
 
-# Define a few command handlers. These usually take the two arguments update and
-# context. Error handlers also receive the raised TelegramError object in error.
+# DB to main file converters
+# Takes in a string of size 16 (binary) and converts it to Dict
+def timeslotToDict(timeslot):
+    print("TIMESLOT TO DICT")
+    timeDict = {}
+    i = 0
+    for time in timeList.values():
+        if time == "Back":
+            break
+        currentAvail = timeslot[i]
+        print(time + ": " + currentAvail)
+        if currentAvail == "0":
+            timeDict[time] = False
+        if currentAvail == "1":
+            timeDict[time] = True
+        i += 1
+    print("TIMESLOT TO DICT END")
+    return timeDict
+
+# Takes in a Dict and converts it to string of size 16 (binary)
+def dictToTimeslot(dict):
+    tempStr = ""
+    for avail in dict.values():
+        if avail:
+            tempStr += "1"
+        if not avail:
+            tempStr += "0"
+    return tempStr
+
+# Command Handlers
 def start(update, context):
     """Send a message when the command /start is issued."""
     txt1 = "Hi! Welcome to GymTogether\n\n"
@@ -116,10 +143,11 @@ def askWeek(update, context):
                      reply_markup = makeInlineKeyboard(weekList, 'WEEK'),
                      parse_mode = 'HTML')
 
-def askDay(update, context, weekPicked):
+def askDay(update, context, weekPicked, db):
     user = update.callback_query.message.chat.username
+    db.setSession(user, weekPicked)
     txt1 = "You are scheduling for <b>{week}</b>\n".format(week = weekPicked)
-    txt2 = printTimeslots(user)
+    txt2 = printWeekTimeslots(user, db)
     txt3 = "Pick the day you wish to schedule for below"
     if txt2 != "":
         txt2 += "\n" 
@@ -130,43 +158,16 @@ def askDay(update, context, weekPicked):
                      message_id = update.callback_query.message.message_id,
                      parse_mode = 'HTML')
 
-def handleDay(update, context, dayPicked, weekPicked):
-    user = update.callback_query.message.chat.username
-    if dayPicked == "Done!":
-        txt1 = "Done scheduling for <em><b>{week}</b></em>!\n".format(week = weekPicked)
-        txt2 = printTimeslots(user)
-        txt3 = "\n<b>See you at the gym :)</b>"
-        fullText = txt1 + txt2 + txt3
-        bot.edit_message_text(chat_id = update.callback_query.message.chat.id,
-                     text = fullText,
-                     message_id = update.callback_query.message.message_id,
-                     parse_mode = 'HTML')
-    else:
-        askTime(update, context, dayPicked)
-
-def printTimeslots(user):
-    txt2 = "\n<b>Timeslots picked:</b>\n"
-    fulltxt = ""
-    for day, timeDict in userDataBase[user].items():
-        tempStr = ""
-        for time, status in timeDict.items():
-            if status:
-                tempStr = tempStr + "\n" + time
-        if tempStr != "":
-            fulltxt += "\n<u>" + day + "</u>" + tempStr + "\n"
-    if fulltxt != "":
-        fulltxt = txt2 + fulltxt
-    return fulltxt
-    
-
-def askTime(update, context, dayPicked):
+def askTime(update, context, dayPicked, db):
     txt1 = "You are scheduling for <b>{day}</b>\n\n".format(day = dayPicked)
     txt2 = "Pick the times you are free\n"
     txt3 = "<b>Hit Done</b> once all slots available are picked\n\n"
     txt4 = "Timeslots picked:\n"
     txt5 = ""
     user = update.callback_query.message.chat.username
-    timeDict = userDataBase[user][dayPicked]
+    timeslot = db.getTimeslotForWeek(user, dayPicked)
+    timeDict = timeslotToDict(timeslot)
+    print(timeDict)
     for time, status in timeDict.items():
         if status:
             txt5 = txt5 + "\n" + time
@@ -177,30 +178,104 @@ def askTime(update, context, dayPicked):
                      message_id = update.callback_query.message.message_id,
                      parse_mode = 'HTML')
 
-def handleTime(update, context, dayPicked, timePicked):
+def printWeekTimeslots(user, db):
+    print("Printing " + user + "'s timeslots")
+    txt2 = "\n<b>Timeslots picked:</b>\n"
+    fulltxt = ""
+    for day in dayList.values():
+        if day == "Done!":
+            break
+        timeslot = db.getTimeslotForWeek(user, day)
+        print("Timeslot: " + timeslot)
+        timeDict = timeslotToDict(timeslot)
+        tempStr = ""
+        for time, status in timeDict.items():
+            if status:
+                tempStr = tempStr + "\n" + time
+        if tempStr != "":
+            fulltxt += "\n<u>" + day + "</u>" + tempStr + "\n"
+    if fulltxt != "":
+        fulltxt = txt2 + fulltxt
+    print("Done printing " + user + "'s timeslots")
+    return fulltxt
+
+def handleSee(update, context):
+    user = update.message.chat.username
+    # Create database (this is required to ensure multiple ppl dont use the same db object)
+    db = DBHelper("userData.sqlite")
+    db.setup()
+    db.handleUsername(user)
+    allTimeslots = printAllTimeslots(user, db)
+    bot.send_message(chat_id = update.message.chat.id,
+                     text = allTimeslots,
+                     parse_mode = 'HTML')
+
+def printAllTimeslots(user, db):
+    txt2 = "\n<u><b>Timeslots picked:</b></u>\n"
+    fulltxt = ""
+    for week in weekList.values():
+        db.setSession(user, week)
+        weekStr = ""
+        for day in dayList.values():
+            if day == "Done!":
+                break
+            timeslot = db.getTimeslotForWeek(user, day)
+            timeDict = timeslotToDict(timeslot)
+            dayStr = ""
+            for time, status in timeDict.items():
+                if status:
+                    dayStr = dayStr + "\n" + time
+            if dayStr != "":
+                weekStr += "\n<u>" + day + "</u>" + dayStr + "\n"
+        if weekStr != "":
+            fulltxt += "\n<b>" + week + "</b>" + weekStr + "\n"
+    db.setSession(user, "No Session")
+    return txt2 + fulltxt
+
+def handleDay(update, context, dayPicked, db):
+    user = update.callback_query.message.chat.username
+    weekPicked = db.getSession(user)
+    if dayPicked == "Done!":
+        txt1 = "Done scheduling for <em><b>{week}</b></em>!\n".format(week = weekPicked)
+        txt2 = printWeekTimeslots(user, db)
+        txt3 = "\n<b>See you at the gym :)</b>"
+        fullText = txt1 + txt2 + txt3
+        db.setSession(user, "No Session")
+        bot.edit_message_text(chat_id = update.callback_query.message.chat.id,
+                     text = fullText,
+                     message_id = update.callback_query.message.message_id,
+                     parse_mode = 'HTML')
+    else:
+        askTime(update, context, dayPicked, db)
+
+def handleTime(update, context, dayPicked, timePicked, db):
+    # Pass in time dict so that it can update
     user = update.callback_query.message.chat.username
     if timePicked == "Back":
-        # ------------------------------------------------
-        # TODO CHANGE THE THIS WEEK
-        # ------------------------------------------------
-        askDay(update, context, "This Week")
+        weekPicked = db.getSession(user)
+        askDay(update, context, weekPicked, db)
     else:
-        currentState = userDataBase[user][dayPicked][timePicked]
-        userDataBase[user][dayPicked][timePicked] = (not currentState)
-        askTime(update, context, dayPicked)
-
+        db.changeTimeslot(user, dayPicked, timePicked)
+        askTime(update, context, dayPicked, db)
 
 def mainCallBackHandler(update, context):
     dataClicked = ast.literal_eval(update.callback_query.data)
     optionID = dataClicked[1]
     value = dataClicked[3]
+    user = update.callback_query.message.chat.username
+
+    # Create database (this is required to ensure multiple ppl dont use the same db object)
+    db = DBHelper("userData.sqlite")
+    db.setup()
+    db.handleUsername(user)
+    print(user + " action: " + optionID + ", " + value)
     if optionID == 'WEEK':
-        askDay(update, context, value)
+        askDay(update, context, value, db)
     if optionID == 'DAY':
-        handleDay(update, context, value, "This Week")
+        handleDay(update, context, value, db)
     if optionID == 'TIME':
         day = dataClicked[5]
-        handleTime(update, context, day, value)
+        handleTime(update, context, day, value, db)
 
 def stop(update, context):
     """Stops"""
@@ -228,6 +303,7 @@ def main():
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help))
     dp.add_handler(CommandHandler("schedule", askWeek))
+    dp.add_handler(CommandHandler("see", handleSee))
 
     # Handle all callback
     dp.add_handler(CallbackQueryHandler(callback=mainCallBackHandler, pattern=str))
